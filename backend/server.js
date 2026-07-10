@@ -1,51 +1,63 @@
 const express = require('express');
 const cors = require('cors');
 const { Sequelize, DataTypes } = require('sequelize');
+require('dotenv').config(); // Carga la variable DATABASE_URL desde tu .env
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // ==========================================
-// 1. CONFIGURACIÓN DE LA BASE DE DATOS SQLITE
+// 1. CONFIGURACIÓN DE LA BASE DE DATOS SUPABASE (POSTGRESQL)
 // ==========================================
-const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: './database.sqlite', // Se crea el archivo físico en la carpeta backend/
-  logging: false
+const sequelize = new Sequelize(process.env.DATABASE_URL, {
+  dialect: 'postgres',
+  protocol: 'postgres',
+  logging: false,
+  dialectOptions: {
+    ssl: {
+      require: true,
+      rejectUnauthorized: false // Requerido para que la conexión a Supabase no sea rechazada
+    }
+  },
+  define: {
+    freezeTableName: true // Evita que Sequelize pluralice automáticamente los nombres de las tablas
+  }
 });
 
 // ==========================================
-// 2. DEFINICIÓN DE MODELOS (TABLAS)
+// 2. DEFINICIÓN DE MODELOS (Respetando las mayúsculas exactas de Supabase)
 // ==========================================
 
-// Modelo existente: Artesania
+// Modelo: Artesania -> Apunta a tu tabla "Artesania"
 const Artesania = sequelize.define('Artesania', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   nombre: { type: DataTypes.STRING, allowNull: false },
   provincia: { type: DataTypes.STRING, allowNull: false },
   precio: { type: DataTypes.FLOAT, allowNull: false },
   stock: { type: DataTypes.INTEGER, allowNull: false },
-  imagen: { type: DataTypes.STRING, allowNull: false }, // Atributo obligatorio
+  imagen: { type: DataTypes.STRING, allowNull: false },
 }, { timestamps: false });
 
-// Modelo de Usuario / Cliente
+// Modelo: Usuario -> Apunta a tu tabla "Usuarios"
 const Usuario = sequelize.define('Usuario', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   nombre: { type: DataTypes.STRING, allowNull: false },
   email: { type: DataTypes.STRING, allowNull: false, unique: true }
-}, { timestamps: false });
+}, { timestamps: false, tableName: 'Usuarios' }); // Forzamos el nombre plural físico que creaste
 
-// Modelo de Pedido / Venta (Historial)
+// Modelo: Pedido -> Apunta a tu tabla "Pedidos"
 const Pedido = sequelize.define('Pedido', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   cantidad: { type: DataTypes.INTEGER, allowNull: false },
   total: { type: DataTypes.FLOAT, allowNull: false },
-  fecha: { type: DataTypes.DATE, defaultValue: Sequelize.NOW }
-}, { timestamps: false });
+  fecha: { type: DataTypes.DATE, defaultValue: Sequelize.NOW },
+  usuarioId: { type: DataTypes.INTEGER, field: 'usuarioId' },     // Mapea exactamente CamelCase
+  artesaniaId: { type: DataTypes.INTEGER, field: 'artesaniaId' }  // Mapea exactamente CamelCase
+}, { timestamps: false, tableName: 'Pedidos' });
 
 // ==========================================
-// 3. CONFIGURACIÓN DE RELACIONES (1 A MUCHOS)
+// 3. CONFIGURACIÓN DE RELACIONES (Respetando tus CamelCase)
 // ==========================================
 Usuario.hasMany(Pedido, { foreignKey: 'usuarioId' });
 Pedido.belongsTo(Usuario, { foreignKey: 'usuarioId' });
@@ -54,68 +66,22 @@ Artesania.hasMany(Pedido, { foreignKey: 'artesaniaId' });
 Pedido.belongsTo(Artesania, { foreignKey: 'artesaniaId' });
 
 // ==========================================
-// 4. INICIALIZACIÓN DE DATOS SEMILLA (SEED) PERSISTENTE
+// 4. CONEXIÓN E INICIALIZACIÓN
 // ==========================================
-const inicializarBaseDatos = async () => {
-  // force: false evita que se limpie la BD en cada reinicio
-  await sequelize.sync({ force: false }); 
-  
-  const conteoUsuarios = await Usuario.count();
-  const conteoArtesanias = await Artesania.count();
-
-  if (conteoUsuarios === 0 && conteoArtesanias === 0) {
-    console.log('🌱 Base de datos vacía. Inyectando datos semilla iniciales...');
-
-    // 1. Inyectar Usuarios Semilla
-    const user1 = await Usuario.create({ nombre: 'Robert Pillaca', email: 'robert@unsch.edu.pe' });
-    const user2 = await Usuario.create({ nombre: 'Gian Carlos', email: 'gian@unsch.edu.pe' });
-
-    // 2. Inyectar Artesanías Semilla con sus respectivas URLs de imagen obligatorias
-    const art1 = await Artesania.create({ 
-      nombre: 'Tapiz de Lana de Ovino Wari', 
-      provincia: 'Huanta', 
-      precio: 120.00, 
-      stock: 2,
-      imagen: 'https://images.unsplash.com/photo-1606744837616-56c9a5c6a6eb?auto=format&fit=crop&w=600&q=80'
-    });
-    const art2 = await Artesania.create({ 
-      nombre: 'Retablo Ayacuchano Tradicional', 
-      provincia: 'Huamanga', 
-      precio: 180.50, 
-      stock: 5,
-      imagen: 'https://images.unsplash.com/photo-1590736969955-71cc94801759?auto=format&fit=crop&w=600&q=80'
-    });
-    const art3 = await Artesania.create({ 
-      nombre: 'Cerámica de Quinua (Iglesia)', 
-      provincia: 'Huamanga', 
-      precio: 45.00, 
-      stock: 3,
-      imagen: 'https://images.unsplash.com/photo-1578749556568-bc2c40e68b61?auto=format&fit=crop&w=600&q=80'
-    });
-    const art4 = await Artesania.create({ 
-      nombre: 'Piedra de Huamanga Esculptada', 
-      provincia: 'Huamanga', 
-      precio: 90.00, 
-      stock: 0,
-      imagen: 'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=600&q=80'
-    });
-
-    // 3. Inyectar una Venta Semilla de ejemplo
-    await Pedido.create({
-      cantidad: 1,
-      total: 120.00,
-      usuarioId: user1.id,
-      artesaniaId: art1.id
-    });
-    
-    console.log('📦 Datos semilla insertados con éxito.');
-  } else {
-    console.log('📦 Base de datos SQLite preservada con éxito. Conservando transacciones y stock actual.');
+const conectarBaseDatos = async () => {
+  try {
+    await sequelize.authenticate();
+    console.log('⚡ Conexión exitosa a Supabase (PostgreSQL) con Sequelize.');
+    // No usamos sync con force para no alterar los datos que migraste manualmente
+    await sequelize.sync({ force: false });
+    console.log('📦 Modelos sincronizados correctamente con las tablas existentes.');
+  } catch (error) {
+    console.error('❌ Error crítico al conectar con Supabase:', error);
   }
 };
 
 // ==========================================
-// 5. ENDPOINTS REST REFACTORIZADOS
+// 5. ENDPOINTS REST (100% Compatibles)
 // ==========================================
 
 // GET: Obtener artesanías
@@ -126,7 +92,7 @@ app.get('/api/artesanias', async (req, res) => {
     const lista = await Artesania.findAll(condiciones);
     res.json(lista);
   } catch (error) {
-    res.status(500).json({ error: 'Error al consultar el catálogo' });
+    res.status(500).json({ error: 'Error al consultar el catálogo en Supabase' });
   }
 });
 
@@ -155,7 +121,7 @@ app.get('/api/pedidos', async (req, res) => {
   }
 });
 
-// POST: Procesamiento de Compra adaptado al flujo Multi-Tabla
+// POST: Procesamiento de Compra
 app.post('/api/compras', async (req, res) => {
   const { artesaniaId, usuarioId, cantidad } = req.body;
 
@@ -174,11 +140,11 @@ app.post('/api/compras', async (req, res) => {
       return res.status(409).json({ error: 'Conflicto de Stock: Existencias insuficientes' });
     }
 
-    // 1. Mutación e impacto atómico en el stock del producto
+    // 1. Restar stock
     producto.stock -= cantidad;
     await producto.save();
 
-    // 2. Persistencia automática del registro en la tabla transaccional Pedidos
+    // 2. Crear Pedido asociando las llaves foráneas exactas
     const totalVenta = producto.precio * cantidad;
     const nuevoPedido = await Pedido.create({
       cantidad,
@@ -188,7 +154,7 @@ app.post('/api/compras', async (req, res) => {
     });
 
     res.status(201).json({
-      mensaje: "Pedido registrado y stock actualizado exitosamente",
+      mensaje: "Pedido registrado y stock actualizado exitosamente en la nube",
       pedidoId: nuevoPedido.id,
       cliente: usuario.nombre,
       producto: producto.nombre,
@@ -198,7 +164,8 @@ app.post('/api/compras', async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ error: 'Error interno en la transacción' });
+    console.error(error);
+    res.status(500).json({ error: 'Error interno en la transacción de Supabase' });
   }
 });
 
@@ -207,6 +174,6 @@ app.post('/api/compras', async (req, res) => {
 // ==========================================
 const PORT = 4000;
 app.listen(PORT, async () => {
-  await inicializarBaseDatos();
+  await conectarBaseDatos();
   console.log(`🚀 API corriendo de forma global en http://localhost:${PORT}`);
 });
